@@ -473,196 +473,151 @@ async function submitWanAnimate({ image, mode, prompt, resolution, seed, video }
 }
 
 app.get('/v1/automations/webhookWanAnimate', async (req, res) => {
-	const baseId = req.query.baseId;
-	const requestedTbl = 'tblwcHLyoHVYauQBB';
-	const fieldName = 'fldahPs300jCTclSQ'; // generated_outputs (field ID)
-	const statusField = 'fldZwTUp3mFnGjbGW'; // Status (field ID)
-	const errField = 'fldQYd9OmUYU8Ja4y'; // err_msg (field ID)
+    const baseId = req.query.baseId;
+    const requestedTbl = 'tblwcHLyoHVYauQBB';
+    const fieldName = 'fldahPs300jCTclSQ';
+    const statusField = 'fldZwTUp3mFnGjbGW';
+    const errField = 'fldQYd9OmUYU8Ja4y';
 
-	function cleanRecId(v) {
-		if (!v) return '';
-		const s = String(v)
-			.trim()
-			.replace(/^["']+|["']+$/g, '');
-		const m = s.match(/rec[0-9A-Za-z]{14}/);
-		return m ? m[0] : s;
-	}
-	const recordId = cleanRecId(req.query.recordId);
+    function cleanRecId(v) {
+        if (!v) return '';
+        const s = String(v).trim().replace(/^["']+|["']+$/g, '');
+        const m = s.match(/rec[0-9A-Za-z]{14}/);
+        return m ? m[0] : s;
+    }
+    const recordId = cleanRecId(req.query.recordId);
 
-	try {
-		if (!baseId || !recordId) {
-			return res.status(400).json({ ok: false, error: 'baseId and recordId are required' });
-		}
-		if (!AIRTABLE_TOKEN || !WAVESPEED_API_KEY) {
-			return res.status(500).json({ ok: false, error: 'Server missing AIRTABLE_TOKEN or WAVESPEED_API_KEY' });
-		}
+    try {
+        if (!baseId || !recordId)
+            return res.status(400).json({ ok: false, error: 'baseId and recordId are required' });
 
-		// Figure out where this record actually lives (and fail with a clear message if it’s not here)
-		let tableIdOrName;
-		try {
-			tableIdOrName = await assertRecordInTableOrExplain(baseId, requestedTbl, recordId);
-		} catch (e) {
-			console.error('[wan] GET record failed:', e.message);
-			return res.status(422).json({ ok: false, error: e.message, code: e.code, actualTable: e.actualTable });
-		}
+        if (!AIRTABLE_TOKEN || !WAVESPEED_API_KEY)
+            return res.status(500).json({ ok: false, error: 'Server missing AIRTABLE_TOKEN or WAVESPEED_API_KEY' });
 
-		// Fetch with field IDs so we can preserve attachment ids
-		const recUrl = `https://api.airtable.com/v0/${encodeURIComponent(baseId)}/${encodeURIComponent(
-			tableIdOrName
-		)}/${encodeURIComponent(recordId)}?returnFieldsByFieldId=true`;
-		const recResp = await fetch(recUrl, { headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` } });
-		const record = await recResp.json();
-		const fields = record?.fields || {};
+        let tableIdOrName;
+        try {
+            tableIdOrName = await assertRecordInTableOrExplain(baseId, requestedTbl, recordId);
+        } catch (e) {
+            console.error('[wan] GET record failed:', e.message);
+            return res.status(422).json({ ok: false, error: e.message, code: e.code, actualTable: e.actualTable });
+        }
 
-		// Flip to Generating
-		await patchAirtableRecord(baseId, tableIdOrName, recordId, { [statusField]: 'Generating', [errField]: '' });
+        const recUrl = `https://api.airtable.com/v0/${encodeURIComponent(baseId)}/${encodeURIComponent(
+            tableIdOrName
+        )}/${encodeURIComponent(recordId)}?returnFieldsByFieldId=true`;
+        const recResp = await fetch(recUrl, { headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` } });
+        const record = await recResp.json();
+        const fields = record?.fields || {};
 
-		// Inputs
-		const refArr = Array.isArray(fields['fldfgQZEx9gu1IXtR'])
-			? fields['fldfgQZEx9gu1IXtR']
-			: Array.isArray(fields['sourceImg'])
-			? fields['sourceImg']
-			: [];
-		const imageUrl = refArr[0]?.url;
-		if (!imageUrl) throw new Error('No reference image found (sourceImg).');
+        await patchAirtableRecord(baseId, tableIdOrName, recordId, { [statusField]: 'Generating', [errField]: '' });
 
-		const vidAttach = Array.isArray(fields['fldAtJ5iexsu3QSc5']) ? fields['fldAtJ5iexsu3QSc5'] : [];
-		const videoUrl =
-			vidAttach[0]?.url ||
-			(typeof fields['sourceVideoUrl'] === 'string' ? fields['sourceVideoUrl'] : '') ||
-			(typeof fields['video'] === 'string' ? fields['video'] : '') ||
-			req.query.video;
-		if (!videoUrl) throw new Error('No source video found (sourceVideo attachment or sourceVideoUrl/text).');
+        const refArr = Array.isArray(fields['fldfgQZEx9gu1IXtR'])
+            ? fields['fldfgQZEx9gu1IXtR']
+            : Array.isArray(fields['sourceImg'])
+            ? fields['sourceImg']
+            : [];
+        const imageUrl = refArr[0]?.url;
+        if (!imageUrl) throw new Error('No reference image found (sourceImg).');
 
-		const prompt = (fields['fldruD65OYSnU76Jv'] || fields['chatgpt_prompt'] || req.query.prompt || '')
-			.toString()
-			.trim();
-		if (!prompt) throw new Error('Missing chatgpt_prompt.');
+        const vidAttach = Array.isArray(fields['fldAtJ5iexsu3QSc5']) ? fields['fldAtJ5iexsu3QSc5'] : [];
+        const videoUrl =
+            vidAttach[0]?.url ||
+            fields['sourceVideoUrl'] ||
+            fields['video'] ||
+            req.query.video;
+        if (!videoUrl) throw new Error('No source video found.');
 
-		let mode = (fields['mode'] || req.query.mode || 'replace').toString().toLowerCase();
-		if (mode !== 'replace' && mode !== 'animate') mode = 'replace';
-		const resolution = (fields['resolution'] || req.query.resolution || '720p').toString();
-		const seed = parseInt(fields['seed'] ?? req.query.seed ?? '-1', 10);
+        const prompt = (fields['fldruD65OYSnU76Jv'] || fields['chatgpt_prompt'] || req.query.prompt || '').trim();
+        if (!prompt) throw new Error('Missing chatgpt_prompt');
 
-		// const durationChoice = fields['fld0903IezfdxheZl'] || fields['duration'] || '5';
-		// const durationStr =
-		// 	typeof durationChoice === 'object' && durationChoice?.name ? durationChoice.name : String(durationChoice);
-		// const duration = parseInt(durationStr, 10) || 5;
+        let mode = (fields['mode'] || req.query.mode || 'replace').toString().toLowerCase();
+        if (mode !== 'replace' && mode !== 'animate') mode = 'replace';
 
-		function readDesired(nField) {
-			if (typeof nField === 'number') return nField;
-			if (typeof nField === 'string') return parseInt(nField, 10);
-			if (nField && typeof nField === 'object' && typeof nField.name === 'string') return parseInt(nField.name, 10);
-			return NaN;
-		}
-		const desiredRaw = req.query.n ?? fields['fldyEoibZoFAAd5N9'] ?? fields['amount_outputs'] ?? '1';
-		let desired = readDesired(desiredRaw);
-		if (!Number.isFinite(desired) || desired < 1) desired = 1;
-		if (desired > 8) desired = 8;
+        const resolution = (fields['resolution'] || req.query.resolution || '720p').toString();
+        const seed = parseInt(fields['seed'] ?? req.query.seed ?? '-1', 10);
 
-		const modelPicked = (fields['fldMXB312vy3JPTq3'] || fields['wan_model_to_use'] || '').toString();
+        const desiredRaw = req.query.n ?? fields['fldyEoibZoFAAd5N9'] ?? fields['amount_outputs'] ?? '1';
+        let desired = parseInt(desiredRaw, 10);
+        if (!Number.isFinite(desired) || desired < 1) desired = 1;
+        if (desired > 8) desired = 8;
 
-		const timeoutSec = Math.max(60, Math.min(3600, parseInt(req.query.timeoutSec || '900', 10)));
-		const perTaskTimeoutMs = timeoutSec * 1000;
-		const MAX_CONCURRENCY = 4;
+        const timeoutSec = Math.max(60, Math.min(3600, parseInt(req.query.timeoutSec || '900', 10)));
+        const perTaskTimeoutMs = timeoutSec * 1000;
+        const MAX_CONCURRENCY = 4;
 
-		// Submit WAN jobs
-		const basePayload = { image: imageUrl, video: videoUrl, prompt, mode, resolution, seed };
-		const taskIds = await Promise.all(Array.from({ length: desired }, () => submitWanAnimate(basePayload)));
-		console.log(`[wan] model=${modelPicked || 'wan-2.2/animate'} submitting ${desired} ->`, taskIds);
+        const basePayload = { image: imageUrl, video: videoUrl, prompt, mode, resolution, seed };
+        const taskIds = await Promise.all(Array.from({ length: desired }, () => submitWanAnimate(basePayload)));
+        console.log(`[wan] submitting ${desired} ->`, taskIds);
 
-		// Poll in batches
-		const idBatches = chunk(taskIds, MAX_CONCURRENCY);
-		const successes = [];
-		const failures = [];
-		for (const batch of idBatches) {
-			const results = await Promise.allSettled(batch.map((id) => pollResult(id, perTaskTimeoutMs)));
-			results.forEach((r, idx) => {
-				const id = batch[idx];
-				if (r.status === 'fulfilled') successes.push(...r.value);
-				else failures.push({ id, error: r.reason?.message || String(r.reason) });
-			});
-			await sleep(1500);
-		}
-		if (!successes.length && failures.length) {
-			throw new Error(
-				`All tasks failed or timed out (${failures.length}/${desired}). Example: ${failures[0].id}: ${failures[0].error}`
-			);
-		}
+        const idBatches = chunk(taskIds, MAX_CONCURRENCY);
+        const successes = [];
+        const failures = [];
+        for (const batch of idBatches) {
+            const results = await Promise.allSettled(batch.map(id => pollResult(id, perTaskTimeoutMs)));
+            results.forEach((r, idx) => {
+                const id = batch[idx];
+                if (r.status === 'fulfilled') successes.push(...r.value);
+                else failures.push({ id, error: r.reason?.message });
+            });
+        }
 
-		// Preserve existing attachments by id, append new
-		const existing = Array.isArray(fields[fieldName]) ? fields[fieldName].map((x) => ({ id: x.id })) : [];
-		const newFiles = successes.map((url, i) => ({ url, filename: `wan_${Date.now()}_${i}.mp4` }));
-		const finalAttachments = [...existing, ...newFiles];
+        const existing = Array.isArray(fields[fieldName]) ? fields[fieldName].map(x => ({ id: x.id })) : [];
+        const newFiles = successes.map((url, i) => ({ url, filename: `wan_${Date.now()}_${i}.mp4` }));
+        const finalAttachments = [...existing, ...newFiles];
 
-		const hadFailures = failures.length > 0;
-		await patchAirtableRecord(baseId, tableIdOrName, recordId, {
-			[fieldName]: finalAttachments,
-			[statusField]: hadFailures ? `Partial Success (${successes.length}/${desired})` : 'Success',
-			[errField]: hadFailures
-				? failures
-						.map((f) => `${f.id}: ${f.error}`)
-						.join(' | ')
-						.slice(0, 1000)
-				: '',
-		});
+        await patchAirtableRecord(baseId, tableIdOrName, recordId, {
+            [fieldName]: finalAttachments,
+            [statusField]: failures.length ? `Partial Success (${successes.length}/${desired})` : 'Success',
+            [errField]: failures.map(f => `${f.id}: ${f.error}`).join(' | ').slice(0, 1000)
+        });
 
-		res.json({
-			ok: true,
-			recordId,
-			requested: desired,
-			completed: successes.length,
-			failed: failures.length,
-			modelPicked,
-		});
-	} catch (err) {
-		console.error('[wan] ERROR:', err?.message || err);
-		try {
-			await patchAirtableRecord(
-				baseId,
-				req.query.tableIdOrName || 'tblpTowzUx7zqnb1h',
-				String(req.query.recordId || '')
-					.trim()
-					.replace(/^["']+|["']+$/g, ''),
-				{ [errField]: String(err?.message || err), [statusField]: 'Error' }
-			);
-		} catch {}
-		res.status(500).json({ ok: false, error: String(err?.message || err) });
-	}
+        res.json({
+            ok: true,
+            recordId,
+            requested: desired,
+            completed: successes.length,
+            failed: failures.length
+        });
+    } catch (err) {
+        console.error('[wan] ERROR:', err?.message || err);
+        await patchAirtableRecord(baseId, requestedTbl, recordId, { [errField]: String(err.message), [statusField]: 'Error' });
+        res.status(500).json({ ok: false, error: err.message });
+    }
 });
 
 app.get('/v1/automations/wan/diagnose', async (req, res) => {
-	const baseId = req.query.baseId;
-	const tableId = req.query.tableIdOrName || 'tblpTowzUx7zqnb1h';
-	const recRaw = (req.query.recordId || '').trim().replace(/^["']+|["']+$/g, '');
-	const recId = (recRaw.match(/rec[0-9A-Za-z]{14}/) || [recRaw])[0];
+    const baseId = req.query.baseId;
+    const tableId = req.query.tableIdOrName || 'tblpTowzUx7zqnb1h';
+    const recRaw = (req.query.recordId || '').trim().replace(/^["']+|["']+$/g, '');
+    const recId = (recRaw.match(/rec[0-9A-Za-z]{14}/) || [recRaw])[0];
 
-	try {
-		const url = `https://api.airtable.com/v0/${encodeURIComponent(baseId)}/${encodeURIComponent(
-			tableId
-		)}/${encodeURIComponent(recId)}?returnFieldsByFieldId=true`;
-		const r = await fetch(url, { headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` } });
-		const text = await r.text();
-		res.status(r.status).json({
-			ok: r.ok,
-			baseId,
-			tableIdOrName: tableId,
-			recordId: recId,
-			note: 'If ok=false and status=422, the record is NOT in this table.',
-			airtableResponse: safeJson(text),
-		});
-	} catch (e) {
-		res.status(500).json({ ok: false, error: String(e?.message || e) });
-	}
+    try {
+        const url = `https://api.airtable.com/v0/${encodeURIComponent(baseId)}/${encodeURIComponent(
+            tableId
+        )}/${encodeURIComponent(recId)}?returnFieldsByFieldId=true`;
+        const r = await fetch(url, { headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` } });
+        const text = await r.text();
+        res.status(r.status).json({
+            ok: r.ok,
+            baseId,
+            tableIdOrName: tableId,
+            recordId: recId,
+            note: 'If ok=false and status=422, the record is NOT in this table.',
+            airtableResponse: safeJson(text),
+        });
+    } catch (e) {
+        res.status(500).json({ ok: false, error: String(e?.message || e) });
+    }
 
-	function safeJson(t) {
-		try {
-			return JSON.parse(t);
-		} catch {
-			return t;
-		}
-	}
+    function safeJson(t) {
+        try {
+            return JSON.parse(t);
+        } catch {
+            return t;
+        }
+    }
 });
+
 
 async function submitWan22_i2v720p({ image, prompt, duration, seed }) {
 	const resp = await fetch('https://api.wavespeed.ai/api/v3/wavespeed-ai/wan-2.2/i2v-720p', {
