@@ -730,13 +730,13 @@ app.get('/v1/automations/webhookWan25i2v', async (req, res) => {
   const statusField = 'Status';
   const errField = 'err_msg';
 
-  console.log(baseId, recordId, tableIdOrName, fieldName);
-
   try {
     await patchAirtableRecord(baseId, tableIdOrName, recordId, { [statusField]: 'Generating', [errField]: '' });
 
     const record = await getAirtableRecord(baseId, tableIdOrName, recordId);
     const fields = record?.fields || {};
+
+    console.log('FIELDS', fields);
 
     const img = fields['sourceImg']?.[0]?.url;
     if (!img) throw new Error('Missing sourceImg');
