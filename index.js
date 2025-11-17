@@ -664,6 +664,169 @@ app.get('/v1/automations/wan/diagnose', async (req, res) => {
 	}
 });
 
+async function submitWan22_i2v720p({ image, prompt, duration, seed }) {
+	const resp = await fetch('https://api.wavespeed.ai/api/v3/wavespeed-ai/wan-2.2/i2v-720p', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${WAVESPEED_API_KEY}` },
+		body: JSON.stringify({ image, prompt, duration, seed })
+	});
+	if (!resp.ok) throw new Error(`Wan 2.2 i2v720p submit failed ${resp.status} ${await resp.text()}`);
+	const data = await resp.json();
+	const id = data?.data?.id;
+	if (!id) throw new Error(`Wan 2.2 i2v720p submit returned no id: ${JSON.stringify(data)}`);
+	return id;
+}
+
+async function submitWan25_i2v({ image, prompt, duration, resolution, seed }) {
+	const resp = await fetch('https://api.wavespeed.ai/api/v3/alibaba/wan-2.5/image-to-video', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${WAVESPEED_API_KEY}` },
+		body: JSON.stringify({
+			image, prompt, duration, resolution, seed,
+			enable_prompt_expansion: false
+		})
+	});
+	if (!resp.ok) throw new Error(`Wan 2.5 submit failed ${resp.status} ${await resp.text()}`);
+	const data = await resp.json();
+	const id = data?.data?.id;
+	if (!id) throw new Error(`Wan 2.5 submit returned no id: ${JSON.stringify(data)}`);
+	return id;
+}
+
+app.get('/v1/automations/webhookWan22i2v', async (req, res) => {
+	const baseId = req.query.baseId;
+	const recordId = req.query.recordId;
+	const tableIdOrName = req.query.tableIdOrName || 'tblwcHLyoHVYauQBB';
+	const fieldName = req.query.fieldName || 'generated_outputs';
+	const statusField = 'Status';
+	const errField = 'err_msg';
+
+	try {
+		await patchAirtableRecord(baseId, tableIdOrName, recordId, { [statusField]: 'Generating', [errField]: '' });
+
+		const record = await getAirtableRecord(baseId, tableIdOrName, recordId);
+		const fields = record?.fields || {};
+
+		const img = fields['sourceImg']?.[0]?.url;
+		if (!img) throw new Error('Missing sourceImg');
+
+		const prompt = (fields['chatgpt_prompt'] || fields['prompt'] || '').toString().trim();
+		if (!prompt) throw new Error('Missing prompt');
+
+		const duration = parseInt(fields['duration'] || req.query.duration || '5', 10);
+		const seed = parseInt(fields['seed'] || req.query.seed || '-1', 10);
+
+		const n = parseInt(fields['amount_outputs'] || req.query.n || '1', 10);
+		const desired = Math.max(1, Math.min(8, n));
+
+		const timeoutSec = parseInt(req.query.timeoutSec || '900', 10);
+		const perTaskTimeoutMs = timeoutSec * 1000;
+		const MAX_CONCURRENCY = 4;
+
+		const taskIds = await Promise.all(
+			Array.from({ length: desired }, () => submitWan22_i2v720p({ image: img, prompt, duration, seed }))
+		);
+		console.log(`[wan22-i2v] submitting ${desired} tasks ->`, taskIds);
+
+		const idBatches = chunk(taskIds, MAX_CONCURRENCY);
+		const successes = [];
+		const failures = [];
+		for (const batch of idBatches) {
+			const results = await Promise.allSettled(batch.map(id => pollResult(id, perTaskTimeoutMs)));
+			results.forEach((r, i) =>
+				r.status === 'fulfilled'
+					? successes.push(...r.value)
+					: failures.push({ id: batch[i], error: r.reason?.message })
+			);
+		}
+
+		const existing = Array.isArray(fields[fieldName]) ? fields[fieldName].map(x => ({ url: x.url })) : [];
+		const newFiles = successes.map((url, i) => ({ url, filename: `wan22_${Date.now()}_${i}.mp4` }));
+		const finalAttachments = [...existing, ...newFiles];
+
+		await patchAirtableRecord(baseId, tableIdOrName, recordId, {
+			[fieldName]: finalAttachments,
+			[statusField]: failures.length ? `Partial Success (${successes.length}/${desired})` : 'Success',
+			[errField]: failures.map(f => `${f.id}: ${f.error}`).join(' | ').slice(0, 1000)
+		});
+
+		res.json({ ok: true, recordId, requested: desired, completed: successes.length, failed: failures.length });
+	} catch (err) {
+		console.error('[wan22-i2v] ERROR:', err.message);
+		await patchAirtableRecord(baseId, tableIdOrName, recordId, { [errField]: err.message, [statusField]: 'Error' });
+		res.status(500).json({ ok: false, error: err.message });
+	}
+});
+
+app.get('/v1/automations/webhookWan25i2v', async (req, res) => {
+	const baseId = req.query.baseId;
+	const recordId = req.query.recordId;
+	const tableIdOrName = req.query.tableIdOrName || 'tblwcHLyoHVYauQBB';
+	const fieldName = req.query.fieldName || 'generated_outputs';
+	const statusField = 'Status';
+	const errField = 'err_msg';
+
+	try {
+		await patchAirtableRecord(baseId, tableIdOrName, recordId, { [statusField]: 'Generating', [errField]: '' });
+
+		const record = await getAirtableRecord(baseId, tableIdOrName, recordId);
+		const fields = record?.fields || {};
+
+		const img = fields['sourceImg']?.[0]?.url;
+		if (!img) throw new Error('Missing sourceImg');
+
+		const prompt = (fields['chatgpt_prompt'] || fields['prompt'] || '').toString().trim();
+		if (!prompt) throw new Error('Missing prompt');
+
+		const duration = parseInt(fields['duration'] || req.query.duration || '5', 10);
+		const resolution = fields['resolution'] || req.query.resolution || '720p';
+		const seed = parseInt(fields['seed'] || req.query.seed || '-1', 10);
+
+		const n = parseInt(fields['amount_outputs'] || req.query.n || '1', 10);
+		const desired = Math.max(1, Math.min(8, n));
+
+		const timeoutSec = parseInt(req.query.timeoutSec || '900', 10);
+		const perTaskTimeoutMs = timeoutSec * 1000;
+		const MAX_CONCURRENCY = 4;
+
+		const taskIds = await Promise.all(
+			Array.from({ length: desired }, () =>
+				submitWan25_i2v({ image: img, prompt, duration, resolution, seed })
+			)
+		);
+		console.log(`[wan25-i2v] submitting ${desired} tasks ->`, taskIds);
+
+		const idBatches = chunk(taskIds, MAX_CONCURRENCY);
+		const successes = [];
+		const failures = [];
+		for (const batch of idBatches) {
+			const results = await Promise.allSettled(batch.map(id => pollResult(id, perTaskTimeoutMs)));
+			results.forEach((r, i) =>
+				r.status === 'fulfilled'
+					? successes.push(...r.value)
+					: failures.push({ id: batch[i], error: r.reason?.message })
+			);
+		}
+
+		const existing = Array.isArray(fields[fieldName]) ? fields[fieldName].map(x => ({ url: x.url })) : [];
+		const newFiles = successes.map((url, i) => ({ url, filename: `wan25_${Date.now()}_${i}.mp4` }));
+		const finalAttachments = [...existing, ...newFiles];
+
+		await patchAirtableRecord(baseId, tableIdOrName, recordId, {
+			[fieldName]: finalAttachments,
+			[statusField]: failures.length ? `Partial Success (${successes.length}/${desired})` : 'Success',
+			[errField]: failures.map(f => `${f.id}: ${f.error}`).join(' | ').slice(0, 1000)
+		});
+
+		res.json({ ok: true, recordId, requested: desired, completed: successes.length, failed: failures.length });
+	} catch (err) {
+		console.error('[wan25-i2v] ERROR:', err.message);
+		await patchAirtableRecord(baseId, tableIdOrName, recordId, { [errField]: err.message, [statusField]: 'Error' });
+		res.status(500).json({ ok: false, error: err.message });
+	}
+});
+
+
 app.listen(PORT, '0.0.0.0', () => {
 	console.log(`HTTP listening on ${PORT}`);
 });
