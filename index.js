@@ -668,8 +668,6 @@ app.get('/v1/automations/webhookWan22i2v', async (req, res) => {
     const record = await getAirtableRecord(baseId, tableIdOrName, recordId);
     const fields = record?.fields || {};
 
-    console.log(`FIELDS`, fields);
-
     const img = fields['sourceImg']?.[0]?.url;
     if (!img) throw new Error('Missing sourceImg');
 
