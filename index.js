@@ -474,8 +474,8 @@ async function submitWanAnimate({ image, mode, prompt, resolution, seed, video }
 
 app.get('/v1/automations/webhookWanAnimate', async (req, res) => {
   const baseId = req.query.baseId;
-  const requestedTbl = 'tblwcHLyoHVYauQBB';
-  const fieldName = 'fldahPs300jCTclSQ';
+  const requestedTbl = req.query.tableIdOrName || 'tblwcHLyoHVYauQBB';
+  const fieldName = req.query.fieldName || 'fldahPs300jCTclSQ';
   const statusField = 'fldZwTUp3mFnGjbGW';
   const errField = 'fldQYd9OmUYU8Ja4y';
 
@@ -657,7 +657,7 @@ async function submitWan25_i2v({ image, prompt, duration, resolution, seed }) {
 app.get('/v1/automations/webhookWan22i2v', async (req, res) => {
   const baseId = req.query.baseId;
   const recordId = req.query.recordId;
-  const tableIdOrName = req.query.tableIdOrName || 'tblwcHLyoHVYauQBB';
+  const tableIdOrName = req.query.tableIdOrName || 'tblpTowzUx7zqnb1h';
   const fieldName = req.query.fieldName || 'generated_outputs';
   const statusField = 'Status';
   const errField = 'err_msg';
@@ -786,6 +786,96 @@ app.get('/v1/automations/webhookWan25i2v', async (req, res) => {
     res.json({ ok: true, recordId, requested: desired, completed: successes.length, failed: failures.length });
   } catch (err) {
     console.error('[wan25-i2v] ERROR:', err.message);
+    await patchAirtableRecord(baseId, tableIdOrName, recordId, { [errField]: err.message, [statusField]: 'Error' });
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+async function submitWavespeedInfiniteTalk({ image, audio, prompt, resolution, seed }) {
+  const resp = await fetch('https://api.wavespeed.ai/api/v3/wavespeed-ai/infinitetalk', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${WAVESPEED_API_KEY}` },
+    body: JSON.stringify({
+      audio,
+      image,
+      prompt,
+      resolution,
+      seed,
+    }),
+  });
+  if (!resp.ok) throw new Error(`WavespeedInfiniteTalk submit failed ${resp.status} ${await resp.text()}`);
+  const data = await resp.json();
+  const id = data?.data?.id;
+  if (!id) throw new Error(`WavespeedInfiniteTalk submit returned no id: ${JSON.stringify(data)}`);
+  return id;
+}
+
+// --- wavespeed-infinitetalk ---
+app.get('/v1/automations/wavespeedInfiniteTalk', async (req, res) => {
+  const baseId = req.query.baseId;
+  const recordId = req.query.recordId;
+  const tableIdOrName = req.query.tableIdOrName || 'tbliEm1efdgbRIFMb';
+  const fieldName = req.query.fieldName || 'generated_outputs';
+
+  const statusField = 'Status';
+  const errField = 'err_msg';
+
+  try {
+    await patchAirtableRecord(baseId, tableIdOrName, recordId, { [statusField]: 'Generating', [errField]: '' });
+
+    const record = await getAirtableRecord(baseId, tableIdOrName, recordId);
+    const fields = record?.fields || {};
+
+    const image = fields['sourceImg']?.[0]?.url;
+    if (!image) throw new Error('Missing sourceImg');
+
+    const audio = fields['audio']?.[0]?.url;
+    if (!audio) throw new Error('Missing audio');
+
+    const prompt = (fields['chatgpt_prompt'] || fields['prompt'] || '').toString().trim();
+    const resolution = fields['resolution'] || req.query.resolution || '720p';
+    const seed = parseInt(fields['seed'] || req.query.seed || '-1', 10);
+
+    const n = parseInt(fields['amount_outputs'] || req.query.n || '1', 10);
+    const desired = Math.max(1, Math.min(8, n));
+
+    const timeoutSec = parseInt(req.query.timeoutSec || '900', 10);
+    const perTaskTimeoutMs = timeoutSec * 1000;
+    const MAX_CONCURRENCY = 4;
+
+    const taskIds = await Promise.all(
+      Array.from({ length: desired }, () => submitWavespeedInfiniteTalk({ image, audio, prompt, resolution, seed }))
+    );
+    console.log(`[wavespeed-ai/infinitetalk] submitting ${desired} tasks ->`, taskIds);
+
+    const idBatches = chunk(taskIds, MAX_CONCURRENCY);
+    const successes = [];
+    const failures = [];
+    for (const batch of idBatches) {
+      const results = await Promise.allSettled(batch.map((id) => pollResult(id, perTaskTimeoutMs)));
+      results.forEach((r, i) =>
+        r.status === 'fulfilled'
+          ? successes.push(...r.value)
+          : failures.push({ id: batch[i], error: r.reason?.message })
+      );
+    }
+
+    const existing = Array.isArray(fields[fieldName]) ? fields[fieldName].map((x) => ({ url: x.url })) : [];
+    const newFiles = successes.map((url, i) => ({ url, filename: `infinitetalk_${Date.now()}_${i}.mp4` }));
+    const finalAttachments = [...existing, ...newFiles];
+
+    await patchAirtableRecord(baseId, tableIdOrName, recordId, {
+      [fieldName]: finalAttachments,
+      [statusField]: failures.length ? `Partial Success (${successes.length}/${desired})` : 'Success',
+      [errField]: failures
+        .map((f) => `${f.id}: ${f.error}`)
+        .join(' | ')
+        .slice(0, 1000),
+    });
+
+    res.json({ ok: true, recordId, requested: desired, completed: successes.length, failed: failures.length });
+  } catch (err) {
+    console.error('[wavespeed-infinitetalk] ERROR:', err.message);
     await patchAirtableRecord(baseId, tableIdOrName, recordId, { [errField]: err.message, [statusField]: 'Error' });
     res.status(500).json({ ok: false, error: err.message });
   }
