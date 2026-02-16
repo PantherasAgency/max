@@ -964,7 +964,7 @@ app.get('/v1/automations/wavespeedNanoBananaEdit', async (req, res) => {
 
     await patchAirtableRecord(baseId, tableIdOrName, recordId, {
       [fieldName]: finalAttachments,
-      [statusField]: hadFailures ? `Partial Success (${successes.length}/${desired})` : 'Success',
+      [statusField]: hadFailures ? 'Partial Success' : 'Success',
       [errField]: hadFailures
         ? failures
           .map((f) => `${f.id}: ${f.error}`)
