@@ -131,13 +131,14 @@ app.get('/v1/automations/webhookSeedanceEditGen', async (req, res) => {
 
     const inputUrls = Array.isArray(faceRef)
       ? faceRef
-          .filter((x) => x?.url)
-          .map((x) => x.url)
-          .slice(0, 10)
+        .filter((x) => x?.url)
+        .map((x) => x.url)
+        .slice(0, 10)
       : [];
     if (!inputUrls.length) throw new Error("No input images in 'face_reference'");
 
     const submitPromises = Array.from({ length: desired }, () => submitEditTask({ images: inputUrls, prompt, size }));
+
     const taskIds = await Promise.all(submitPromises);
     console.log(`[seedance-edit] submitting ${desired} tasks ->`, taskIds);
 
@@ -169,9 +170,9 @@ app.get('/v1/automations/webhookSeedanceEditGen', async (req, res) => {
       [statusField]: hadFailures ? `Partial Success (${successes.length}/${desired})` : 'Success',
       [errField]: hadFailures
         ? failures
-            .map((f) => `${f.id}: ${f.error}`)
-            .join(' | ')
-            .slice(0, 1000)
+          .map((f) => `${f.id}: ${f.error}`)
+          .join(' | ')
+          .slice(0, 1000)
         : '',
     });
 
@@ -184,7 +185,7 @@ app.get('/v1/automations/webhookSeedanceEditGen', async (req, res) => {
         [errField]: String(err?.message || err),
         [statusField]: 'Error',
       });
-    } catch {}
+    } catch { }
     res.status(500).json({ ok: false, error: String(err?.message || err) });
   }
 });
@@ -220,8 +221,8 @@ app.get('/v1/automations/webhookKling21Std', async (req, res) => {
     const srcArr = Array.isArray(fields['fldpcNNeTNguuAWno'])
       ? fields['fldpcNNeTNguuAWno']
       : Array.isArray(fields['sourceImg'])
-      ? fields['sourceImg']
-      : [];
+        ? fields['sourceImg']
+        : [];
     const imageUrl = srcArr[0]?.url;
     if (!imageUrl) throw new Error("No image found in 'sourceImg' field");
 
@@ -282,9 +283,9 @@ app.get('/v1/automations/webhookKling21Std', async (req, res) => {
       [statusField]: hadFailures ? `Partial Success (${successes.length}/${desired})` : 'Success',
       [errField]: hadFailures
         ? failures
-            .map((f) => `${f.id}: ${f.error}`)
-            .join(' | ')
-            .slice(0, 1000)
+          .map((f) => `${f.id}: ${f.error}`)
+          .join(' | ')
+          .slice(0, 1000)
         : '',
     });
 
@@ -293,7 +294,7 @@ app.get('/v1/automations/webhookKling21Std', async (req, res) => {
     console.error('[kling21] ERROR:', err.message);
     try {
       await patchAirtableRecord(baseId, tableIdOrName, recordId, { [errField]: err.message, [statusField]: 'Error' });
-    } catch {}
+    } catch { }
     res.status(500).json({ ok: false, error: err.message });
   }
 });
@@ -336,8 +337,8 @@ app.get('/v1/automations/webhookKling25Turbo', async (req, res) => {
     const srcArr = Array.isArray(fields['fldxGFYOQAF1voks9'])
       ? fields['fldxGFYOQAF1voks9']
       : Array.isArray(fields['sourceImg'])
-      ? fields['sourceImg']
-      : [];
+        ? fields['sourceImg']
+        : [];
     const imageUrl = srcArr[0]?.url;
     if (!imageUrl) throw new Error("No image found in 'sourceImg' field");
 
@@ -403,9 +404,9 @@ app.get('/v1/automations/webhookKling25Turbo', async (req, res) => {
       [statusField]: hadFailures ? `Partial Success (${successes.length}/${desired})` : 'Success',
       [errField]: hadFailures
         ? failures
-            .map((f) => `${f.id}: ${f.error}`)
-            .join(' | ')
-            .slice(0, 1000)
+          .map((f) => `${f.id}: ${f.error}`)
+          .join(' | ')
+          .slice(0, 1000)
         : '',
     });
 
@@ -414,7 +415,7 @@ app.get('/v1/automations/webhookKling25Turbo', async (req, res) => {
     console.error('[kling25] ERROR:', err.message);
     try {
       await patchAirtableRecord(baseId, tableIdOrName, recordId, { [errField]: err.message, [statusField]: 'Error' });
-    } catch {}
+    } catch { }
     res.status(500).json({ ok: false, error: err.message });
   }
 });
@@ -515,8 +516,8 @@ app.get('/v1/automations/webhookWanAnimate', async (req, res) => {
     const refArr = Array.isArray(fields['fldfgQZEx9gu1IXtR'])
       ? fields['fldfgQZEx9gu1IXtR']
       : Array.isArray(fields['sourceImg'])
-      ? fields['sourceImg']
-      : [];
+        ? fields['sourceImg']
+        : [];
     const imageUrl = refArr[0]?.url;
     if (!imageUrl) throw new Error('No reference image found (sourceImg).');
 
@@ -791,6 +792,7 @@ app.get('/v1/automations/webhookWan25i2v', async (req, res) => {
   }
 });
 
+// --- wavespeed-infinitetalk ---
 async function submitWavespeedInfiniteTalk({ image, audio, prompt, resolution, seed }) {
   const resp = await fetch('https://api.wavespeed.ai/api/v3/wavespeed-ai/infinitetalk', {
     method: 'POST',
@@ -810,7 +812,7 @@ async function submitWavespeedInfiniteTalk({ image, audio, prompt, resolution, s
   return id;
 }
 
-// --- wavespeed-infinitetalk ---
+
 app.get('/v1/automations/wavespeedInfiniteTalk', async (req, res) => {
   const baseId = req.query.baseId;
   const recordId = req.query.recordId;
@@ -880,6 +882,107 @@ app.get('/v1/automations/wavespeedInfiniteTalk', async (req, res) => {
     res.status(500).json({ ok: false, error: err.message });
   }
 });
+
+
+// --- wavespeed-nano-banana/edit ---
+async function submitWavespeedNanoBananaEdit({ images, prompt, aspectRatio }) {
+  const resp = await fetch('https://api.wavespeed.ai/api/v3/google/nano-banana/edit', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${WAVESPEED_API_KEY}` },
+    body: JSON.stringify({
+      enable_base64_output: false,
+      enable_sync_mode: false,
+      images,
+      prompt,
+      ...(aspectRatio && { aspect_ratio: aspectRatio })
+    }),
+  });
+  if (!resp.ok) throw new Error(`Wavespeed Nano Banana Edit failed ${resp.status} ${await resp.text()}`);
+  const data = await resp.json();
+  const id = data?.data?.id;
+  if (!id) throw new Error(`Wavespeed Nano Banana Edit returned no id: ${JSON.stringify(data)}`);
+  return id;
+}
+
+app.get('/v1/automations/wavespeedNanoBananaEdit', async (req, res) => {
+  const baseId = req.query.baseId;
+  const recordId = req.query.recordId;
+  const tableIdOrName = req.query.tableIdOrName || 'tblSPG9eWXyYPyU14';
+  const fieldName = req.query.fieldName || 'Attachments';
+
+  const statusField = 'Status';
+  const errField = 'err_msg';
+
+  try {
+    await patchAirtableRecord(baseId, tableIdOrName, recordId, { [statusField]: 'Generating', [errField]: '' });
+
+    const record = await getAirtableRecord(baseId, tableIdOrName, recordId);
+    const fields = record?.fields || {};
+
+    const images = fields['input_images'];
+    const prompt = (fields['prompt'] || '').toString().trim();
+    const aspectRatio = (fields['aspect_ratio'] || '').toString().trim();
+
+    const n = parseInt(fields['amount_outputs'] || req.query.n || '1', 10);
+    const desired = Math.max(1, Math.min(8, n));
+
+    const timeoutSec = parseInt(req.query.timeoutSec || '900', 10);
+    const perTaskTimeoutMs = timeoutSec * 1000;
+    const MAX_CONCURRENCY = 4;
+
+    const inputUrls = Array.isArray(images)
+      ? images
+        .filter((x) => x?.url)
+        .map((x) => x.url)
+        .slice(0, 10)
+      : [];
+    if (!inputUrls.length) throw new Error("No input images in 'input_images'");
+
+    const taskIds = await Promise.all(
+      Array.from({ length: desired }, () => submitWavespeedNanoBananaEdit({ images: inputUrls, prompt, aspectRatio }))
+    );
+    console.log(`[wavespeed-ai/nano-banana/edit] submitting ${desired} tasks ->`, taskIds);
+
+    const idBatches = chunk(taskIds, MAX_CONCURRENCY);
+
+    const successes = [];
+    const failures = [];
+
+    for (const batch of idBatches) {
+      const results = await Promise.allSettled(batch.map((id) => pollResult(id, perTaskTimeoutMs)));
+      results.forEach((r, i) =>
+        r.status === 'fulfilled'
+          ? successes.push(...r.value)
+          : failures.push({ id: batch[i], error: r.reason?.message })
+      );
+    }
+
+    const existing = Array.isArray(fields[fieldName]) ? fields[fieldName].map((x) => ({ url: x.url })) : [];
+    const finalAttachments = [...existing, ...successes.map((url) => ({ url }))];
+
+    const hadFailures = failures.length > 0;
+
+    await patchAirtableRecord(baseId, tableIdOrName, recordId, {
+      [fieldName]: finalAttachments,
+      [statusField]: hadFailures ? `Partial Success (${successes.length}/${desired})` : 'Success',
+      [errField]: hadFailures
+        ? failures
+          .map((f) => `${f.id}: ${f.error}`)
+          .join(' | ')
+          .slice(0, 1000)
+        : '',
+    });
+
+    console.log(`[wavespeed-ai/nano-banana/edit] outputs: ${successes.length}/${desired} for record ${recordId}`);
+
+    res.json({ ok: true, recordId, requested: desired, completed: successes.length, failed: failures.length });
+  } catch (err) {
+    console.error('[wavespeed-ai/nano-banana/edit] ERROR:', err.message);
+    await patchAirtableRecord(baseId, tableIdOrName, recordId, { [errField]: err.message, [statusField]: 'Error' });
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`HTTP listening on ${PORT}`);
