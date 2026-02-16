@@ -984,6 +984,116 @@ app.get('/v1/automations/wavespeedNanoBananaEdit', async (req, res) => {
 });
 
 
+// --- wavespeed-kling26pro ---
+async function submitWavespeedKling26Pro({ image, endImage, prompt, negativePrompt, sound, duration }) {
+  const resp = await fetch('https://api.wavespeed.ai/api/v3/kwaivgi/kling-v2.6-pro/image-to-video', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${WAVESPEED_API_KEY}` },
+    body: JSON.stringify({
+      image,
+      ...(endImage && { end_image: endImage }),
+      prompt,
+      negative_prompt: negativePrompt,
+      sound,
+      duration,
+      guidance_scale: 0.5
+    }),
+  });
+  if (!resp.ok) throw new Error(`Wavespeed Kling 2.6 Pro failed ${resp.status} ${await resp.text()}`);
+  const data = await resp.json();
+  const id = data?.data?.id;
+  if (!id) throw new Error(`Wavespeed Kling 2.6 Pro returned no id: ${JSON.stringify(data)}`);
+  return id;
+}
+
+app.get('/v1/automations/wavespeedKling26Pro', async (req, res) => {
+  const baseId = req.query.baseId;
+  const recordId = req.query.recordId;
+  const tableIdOrName = req.query.tableIdOrName || 'tbltQFeQZa5gHS8vC';
+  const fieldName = req.query.fieldName || 'generated_outputs';
+
+  const statusField = 'Status';
+  const errField = 'err_msg';
+
+  try {
+    await patchAirtableRecord(baseId, tableIdOrName, recordId, { [statusField]: 'Generating', [errField]: '' });
+
+    const record = await getAirtableRecord(baseId, tableIdOrName, recordId);
+    const fields = record?.fields || {};
+
+    const imageArr = Array.isArray(fields['image']) ? fields['image'] : [];
+    const imageUrl = imageArr[0]?.url;
+    if (!imageUrl) throw new Error("No image found in 'image' field");
+
+    const endImageArr = Array.isArray(fields['end_image']) ? fields['end_image'] : [];
+    const endImageUrl = endImageArr[0]?.url;
+
+    const prompt = (fields['prompt'] || '').toString().trim();
+    if (!prompt) throw new Error('Missing prompt field');
+
+    const negativePrompt = (fields['negative_prompt'] || '').toString().trim();
+
+    const durationRaw = parseInt(fields['duration'] || req.query.duration || '5', 10);
+    const duration = Number.isFinite(durationRaw) && durationRaw > 0 ? durationRaw : 5;
+
+    const sound =
+      fields['sound'] === true ||
+      fields['sound'] === 'true';
+
+    const n = parseInt(fields['amount_outputs'] || req.query.n || '1', 10);
+    const desired = Math.max(1, Math.min(4, n));
+
+    const timeoutSec = parseInt(req.query.timeoutSec || '900', 10);
+    const perTaskTimeoutMs = timeoutSec * 1000;
+    const MAX_CONCURRENCY = 4;
+
+    const taskIds = await Promise.all(
+      Array.from({ length: desired }, () => submitWavespeedKling26Pro({ image: imageUrl, endImage: endImageUrl, prompt, negativePrompt, duration, sound }))
+    );
+    console.log(`[wavespeed-ai/kling26pro] submitting ${desired} tasks ->`, taskIds);
+
+    const idBatches = chunk(taskIds, MAX_CONCURRENCY);
+
+    const successes = [];
+    const failures = [];
+
+    for (const batch of idBatches) {
+      const results = await Promise.allSettled(batch.map((id) => pollResult(id, perTaskTimeoutMs)));
+      results.forEach((r, i) =>
+        r.status === 'fulfilled'
+          ? successes.push(...r.value)
+          : failures.push({ id: batch[i], error: r.reason?.message })
+      );
+    }
+
+    const existing = Array.isArray(fields[fieldName]) ? fields[fieldName].map((x) => ({ url: x.url })) : [];
+    const newFiles = successes.map((url, i) => ({ url, filename: `kling26pro_${Date.now()}_${i}.mp4` }));
+    const finalAttachments = [...existing, ...newFiles];
+
+    const hadFailures = failures.length > 0;
+
+    await patchAirtableRecord(baseId, tableIdOrName, recordId, {
+      [fieldName]: finalAttachments,
+      [statusField]: hadFailures ? 'Error' : 'Success',
+      [errField]: hadFailures
+        ? failures
+          .map((f) => `${f.id}: ${f.error}`)
+          .join(' | ')
+          .slice(0, 1000)
+        : '',
+    });
+
+    console.log(`[wavespeed-ai/kling26pro] outputs: ${successes.length}/${desired} for record ${recordId}`);
+
+    res.json({ ok: true, recordId, requested: desired, completed: successes.length, failed: failures.length });
+  } catch (err) {
+    console.error('[wavespeed-ai/kling26pro] ERROR:', err.message);
+    await patchAirtableRecord(baseId, tableIdOrName, recordId, { [errField]: err.message, [statusField]: 'Error' });
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`HTTP listening on ${PORT}`);
 });
