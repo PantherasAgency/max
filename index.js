@@ -983,6 +983,109 @@ app.get('/v1/automations/wavespeedNanoBananaEdit', async (req, res) => {
   }
 });
 
+// --- wavespeed-nano-banana2/edit ---
+async function submitWavespeedNanoBanana2Edit({ images, prompt, aspectRatio, resolution, enable_web_search }) {
+  const resp = await fetch('https://api.wavespeed.ai/api/v3/google/nano-banana-2/edit', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${WAVESPEED_API_KEY}` },
+    body: JSON.stringify({
+      enable_base64_output: false,
+      enable_sync_mode: false,
+      enable_web_search,
+      images,
+      prompt,
+      ...(aspectRatio && { aspect_ratio: aspectRatio }),
+      resolution
+    }),
+  });
+  if (!resp.ok) throw new Error(`Wavespeed Nano Banana 2 Edit failed ${resp.status} ${await resp.text()}`);
+  const data = await resp.json();
+  const id = data?.data?.id;
+  if (!id) throw new Error(`Wavespeed Nano Banana 2 Edit returned no id: ${JSON.stringify(data)}`);
+  return id;
+}
+
+app.get('/v1/automations/wavespeedNanoBanana2Edit', async (req, res) => {
+  const baseId = req.query.baseId;
+  const recordId = req.query.recordId;
+  const tableIdOrName = req.query.tableIdOrName || 'tblinsI7LX6Pi2AW5';
+  const fieldName = req.query.fieldName || 'Attachments';
+
+  const statusField = 'Status';
+  const errField = 'err_msg';
+
+  try {
+    await patchAirtableRecord(baseId, tableIdOrName, recordId, { [statusField]: 'Generating', [errField]: '' });
+
+    const record = await getAirtableRecord(baseId, tableIdOrName, recordId);
+    const fields = record?.fields || {};
+
+    const images = fields['input_images'];
+    const prompt = (fields['prompt'] || '').toString().trim();
+    const aspectRatio = (fields['aspect_ratio'] || '').toString().trim();
+    const resolution = (fields['resolution'] || '').toString().trim() || '1k';
+    const enable_web_search = fields['enable_web_search'] === true;
+
+    const n = parseInt(fields['amount_outputs'] || req.query.n || '1', 10);
+    const desired = Math.max(1, Math.min(8, n));
+
+    const timeoutSec = parseInt(req.query.timeoutSec || '900', 10);
+    const perTaskTimeoutMs = timeoutSec * 1000;
+    const MAX_CONCURRENCY = 4;
+
+    const inputUrls = Array.isArray(images)
+      ? images
+        .filter((x) => x?.url)
+        .map((x) => x.url)
+        .slice(0, 10)
+      : [];
+    if (!inputUrls.length) throw new Error("No input images in 'input_images'");
+
+    const taskIds = await Promise.all(
+      Array.from({ length: desired }, () => submitWavespeedNanoBanana2Edit({ images: inputUrls, prompt, aspectRatio, resolution, enable_web_search }))
+    );
+    console.log(`[wavespeed-ai/nano-banana2/edit] submitting ${desired} tasks ->`, taskIds);
+
+    const idBatches = chunk(taskIds, MAX_CONCURRENCY);
+
+    const successes = [];
+    const failures = [];
+
+    for (const batch of idBatches) {
+      const results = await Promise.allSettled(batch.map((id) => pollResult(id, perTaskTimeoutMs)));
+      results.forEach((r, i) =>
+        r.status === 'fulfilled'
+          ? successes.push(...r.value)
+          : failures.push({ id: batch[i], error: r.reason?.message })
+      );
+    }
+
+    const existing = Array.isArray(fields[fieldName]) ? fields[fieldName].map((x) => ({ url: x.url })) : [];
+    const finalAttachments = [...existing, ...successes.map((url) => ({ url }))];
+
+    const hadFailures = failures.length > 0;
+
+    await patchAirtableRecord(baseId, tableIdOrName, recordId, {
+      [fieldName]: finalAttachments,
+      [statusField]: hadFailures ? 'Partial Success' : 'Success',
+      [errField]: hadFailures
+        ? failures
+          .map((f) => `${f.id}: ${f.error}`)
+          .join(' | ')
+          .slice(0, 1000)
+        : '',
+    });
+
+    console.log(`[wavespeed-ai/nano-banana2/edit] outputs: ${successes.length}/${desired} for record ${recordId}`);
+
+    res.json({ ok: true, recordId, requested: desired, completed: successes.length, failed: failures.length });
+  } catch (err) {
+    console.error('[wavespeed-ai/nano-banana2/edit] ERROR:', err.message);
+    await patchAirtableRecord(baseId, tableIdOrName, recordId, { [errField]: err.message, [statusField]: 'Error' });
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 
 // --- wavespeed-kling26pro ---
 async function submitWavespeedKling26Pro({ image, endImage, prompt, negativePrompt, sound, duration }) {
