@@ -992,6 +992,7 @@ async function submitWavespeedNanoBanana2Edit({ images, prompt, aspectRatio, res
       enable_base64_output: false,
       enable_sync_mode: false,
       enable_web_search,
+      enable_safety_checker: false,
       images,
       prompt,
       ...(aspectRatio && { aspect_ratio: aspectRatio }),
